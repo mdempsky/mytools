@@ -1,0 +1,129 @@
+#!/bin/bash -e
+
+# Copyright 2023 The Go Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style
+# license that can be found in the LICENSE file.
+
+# The gotry command is a script I use to automate testing while
+# working on the Go project, particularly the Go compiler.
+#
+# It takes a snapshot of the current files on my work laptop, and then
+# pushes them to my cloud workstation, where I can test that the files
+# still pass tests. If the tests still pass, then it advances the
+# local git commit history to use that as my new head.
+#
+# It's like using CI/CD during local development. I like breaking my
+# work into tiny steps, so I can make sure that each individual step
+# keeps everything working. That way if I've broken anything, I can
+# easily rewind to the last good state.
+#
+# Usage
+#
+# Run gotry within a Go checkout. It will update the index with all
+# modified files, create a Git snapshot, and test it on the remote
+# host.
+#
+# If the tests pass (and the branch head hasn't changed since taking
+# the snapshot), then the local Git branch head is advanced to the
+# snapshot.
+#
+# Rationale
+#
+# When working on a complex code base (e.g., the Go compiler), I like
+# working in small steps. This gives me quicker feedback if I've taken
+# a bad step. I've been bitten too many times by thinking I understand
+# some code, rewriting it all, then discovering some tests are
+# mysteriously failing, and I can't easily figure out why. But
+# instead, if I work incrementally and test frequently, then I know
+# the specific change that broke the test. Instead of needing to run a
+# debugger, I can effectively just bisect my local changes.
+#
+# Also, testing on a remote machine has a few benefits: it reduces
+# load on my development machine (typically a laptop), and it also
+# helps ensure the commits are hermetic (i.e., don't depend on quirks
+# of my dev environment, and that I haven't forgotten to `git add` new
+# source files).
+#
+# Future plans
+#
+# I usually configure gotry to run a quick smoke test, because I want
+# to get results back by time I'm ready to try another snapshot.
+# However, occasionally things break that I don't anticipate, and I
+# have to unwind my local development.
+#
+# It would be nice if gotry could keep track of which tests
+# passed/failed recently, and only run the most-likely-to-fail tests
+# for smoke testing, but then periodically run the full test suite as
+# build capacity allows.
+
+## Configuration
+
+# My remote host and the directory where my Go checkout resides.
+remote=seraph
+path=wd/go.try
+
+# If the target file system has fewer than minspace bytes available,
+# then gotry will run `go clean -cache` before testing.
+minspace=50000000 # 50GB
+
+{
+
+# Make a snapshot commit of the current working tree.
+git codereview gofmt
+git add -u
+head=$(git rev-parse HEAD)
+index=$(git write-tree)
+commit=$(git commit-tree $index -p $head -m "gotry checkpoint")
+
+empty=0
+if [ $(git rev-parse $commit^{tree}) == $(git rev-parse $head^{tree}) ]; then
+    echo "Note: No changes since previous commit."
+    empty=1
+fi
+
+# Copy commit to test machine.
+#
+# TODO(mdempsky): Why is this warning me "--negotiate-only requires
+# protocol v2"? Seems to still work though...
+git push -q -f $remote:$path $commit:refs/remotes/gotry/next-$commit
+
+# Test it out.
+# TODO(mdempsky): Run `git clean -f` maybe?
+time ssh -t $remote "
+bash -l -e -c \"
+set -x
+cd $path
+hostname
+pwd
+export PATH=\\\$(pwd)/bin:\\\$PATH
+go env GOROOT
+git checkout --detach gotry/next-$commit
+git reset --hard HEAD
+df -h /
+available=\\\$(df / | grep '^/' | (read path blocks used available rest; echo \\\$available))
+
+if [ \\\$available -lt $minspace ]; then
+  echo cleaning cache...
+  go clean -cache
+  df -h /
+fi
+
+toolstash restore
+go tool compile -V
+go install cmd
+go test -short std cmd
+\"
+"
+result="$?"
+
+# Move to new commit, if appropriate.
+if [ $empty == 0 ]; then
+    if [ $(git rev-parse HEAD) == $head ]; then
+	git reset $commit
+    else
+	echo "Warning: Previous commit changed during testing; no longer $head"
+    fi
+fi
+
+exit "$result"
+}
