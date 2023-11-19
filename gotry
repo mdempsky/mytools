@@ -70,6 +70,11 @@ path=wd/go.try
 # then gotry will run `go clean -cache` before testing.
 minspace=10000000 # 10GB
 
+# Sound effects to play on success and failure.
+mediadir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/media" && pwd)"
+oksound="$mediadir/short-success-sound-glockenspiel-treasure-video-game-6346.mp3"
+failsound="$mediadir/failure-drum-sound-effect-2-7184.mp3"
+
 {
 
 # Make a snapshot commit of the current working tree.
@@ -93,7 +98,7 @@ git push -q -f $remote:$path $commit:refs/remotes/gotry/next-$commit
 
 # Test it out.
 # TODO(mdempsky): Run `git clean -f` maybe?
-time ssh -t $remote "
+if time ssh -t $remote "
 bash -l -e -c \"
 set -x
 cd $path
@@ -118,16 +123,25 @@ cd src
 GO_TEST_SHARDS=10 ./run.bash
 \"
 "
-result="$?"
+then
+  # Success.
 
-# Move to new commit, if appropriate.
-if [ $empty == 0 ]; then
+  # Move to new commit, if appropriate.
+  if [ $empty == 0 ]; then
     if [ $(git rev-parse HEAD) == $head ]; then
-	git reset $commit
+      git reset $commit
     else
-	echo "Warning: Previous commit changed during testing; no longer $head"
+      echo "Warning: Previous commit changed during testing; no longer $head"
     fi
-fi
+  fi
 
-exit "$result"
+  play "$oksound"
+  exit 0
+else
+  # Failure.
+  result="$?"
+
+  play "$failsound"
+  exit "$result"
+fi
 }

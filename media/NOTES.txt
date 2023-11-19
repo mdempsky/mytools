@@ -1,0 +1,7 @@
+I downloaded these two sound effect files from pixabay.com:
+
+failure-drum-sound-effect-2-7184.mp3
+short-success-sound-glockenspiel-treasure-video-game-6346.mp3
+
+TODO(mdempsky): Automate downloading of them if I need to repeat that
+again in the future.
