@@ -55,6 +55,10 @@
 # passed/failed recently, and only run the most-likely-to-fail tests
 # for smoke testing, but then periodically run the full test suite as
 # build capacity allows.
+#
+# 2023-11-19: I've actually switched to simply running run.bash for
+# now, and accepting the slow test cycle for now. It looks like maybe
+# I can use `go tool dist test -json` instead?
 
 ## Configuration
 
@@ -64,7 +68,7 @@ path=wd/go.try
 
 # If the target file system has fewer than minspace bytes available,
 # then gotry will run `go clean -cache` before testing.
-minspace=50000000 # 50GB
+minspace=10000000 # 10GB
 
 {
 
@@ -110,8 +114,8 @@ fi
 
 toolstash restore
 go tool compile -V
-go install cmd
-go test -short std cmd
+cd src
+GO_TEST_SHARDS=10 ./run.bash
 \"
 "
 result="$?"
